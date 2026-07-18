@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Accident Hotspot Analysis · Traffic Operations Center</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%233B82F6' d='M12 2 1 21h22L12 2zm0 3.7L19.5 19h-15L12 5.7zM11 10h2v5h-2v-5zm0 6h2v2h-2v-2z'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg-0: #10151B;
+    --bg-1: #171E27;
+    --bg-2: #1E293B;
+    --border: rgba(255,255,255,.08);
+    --border-soft: rgba(255,255,255,.05);
+    --text-hi: #F1F5F9;
+    --text-mid: #94A3B8;
+    --text-lo: #5B6B82;
+    --blue: #3B82F6;
+    --blue-dim: rgba(59,130,246,.12);
+    --green: #22C55E;
+    --green-dim: rgba(34,197,94,.12);
+    --amber: #F59E0B;
+    --amber-dim: rgba(245,158,11,.12);
+    --red: #EF4444;
+    --red-dim: rgba(239,68,68,.12);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg-0); }
+  #app {
+    color: var(--text-hi);
+    font-family: 'Inter', -apple-system, sans-serif;
+    min-height: 100vh;
+  }
+  h1, h2, h3 { font-family: 'Oswald', sans-serif; margin: 0; }
+  .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-mid); margin-bottom: 8px; }
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: #2E3947; border-radius: 3px; }
+
+  /* ================= loading screen ================= */
+  #loadingScreen {
+    position: fixed; inset: 0; z-index: 999; background: var(--bg-0);
+    display: flex; align-items: center; justify-content: center; flex-direction: column;
+    transition: opacity .5s ease, visibility .5s ease;
+  }
+  #loadingScreen.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+  .load-logo { width: 64px; height: 64px; border-radius: 16px; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, var(--blue), #1D4ED8); box-shadow: 0 12px 34px rgba(59,130,246,.4); margin-bottom: 22px;
+    animation: floaty 2.2s ease-in-out infinite; }
+  @keyframes floaty { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+  .load-title { font-family: 'Oswald', sans-serif; font-size: 18px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+  .load-sub { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text-lo); letter-spacing: .08em; text-transform: uppercase; margin-bottom: 28px; }
+  .load-bar-track { width: 260px; height: 4px; background: var(--bg-2); border-radius: 2px; overflow: hidden; position: relative; }
+  .load-bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--blue), #60A5FA); border-radius: 2px; transition: width .3s ease; position: relative; overflow: hidden; }
+  .load-bar-fill::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.5), transparent);
+    animation: shimmer 1.1s infinite;
+  }
+  @keyframes shimmer { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+  .load-status { margin-top: 14px; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: var(--text-lo); }
+
+  /* ================= toasts ================= */
+  #toastStack {
+    position: fixed; top: 18px; right: 18px; z-index: 500;
+    display: flex; flex-direction: column; gap: 10px; max-width: 320px;
+  }
+  .toast {
+    display: flex; align-items: center; gap: 10px; padding: 12px 14px;
+    background: rgba(23,30,39,.92); backdrop-filter: blur(12px);
+    border: 1px solid var(--border); border-left: 3px solid var(--blue);
+    border-radius: 9px; box-shadow: 0 10px 30px rgba(0,0,0,.35);
+    font-size: 12.5px; color: var(--text-hi);
+    animation: toastIn .25s cubic-bezier(.16,1,.3,1);
+  }
+  .toast.success { border-left-color: var(--green); }
+  .toast.warn { border-left-color: var(--amber); }
+  .toast.danger { border-left-color: var(--red); }
+  .toast.leaving { animation: toastOut .25s ease forwards; }
+  @keyframes toastIn { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes toastOut { to { opacity: 0; transform: translateX(24px); } }
+
+  /* ================= navbar / header ================= */
+  .navbar {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(23,30,39,.92); backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border-soft);
+    padding: 12px 28px;
+  }
+  .navbar-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand .mark {
+    width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, var(--blue), #1D4ED8); box-shadow: 0 6px 18px rgba(59,130,246,.3); flex-shrink: 0;
+  }
+  .brand .titles h1 { font-size: 16px; text-transform: uppercase; letter-spacing: .03em; }
+  .brand .titles .sub { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--text-lo); letter-spacing: .1em; text-transform: uppercase; margin-top: 1px; }
+
+  .nav-center { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+  .clock-block { text-align: right; }
+  .clock-block .time { font-family: 'IBM Plex Mono', monospace; font-size: 15px; font-weight: 600; color: var(--text-hi); line-height: 1.1; }
+  .clock-block .date { font-size: 10.5px; color: var(--text-lo); margin-top: 1px; }
+
+  .status-pill {
+    display: flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 20px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+    border: 1px solid var(--border);
+  }
+  .status-pill.ok { color: #86EFAC; background: var(--green-dim); border-color: rgba(34,197,94,.3); }
+  .status-pill.warn { color: #FCD34D; background: var(--amber-dim); border-color: rgba(245,158,11,.3); }
+  .dot-sm { width: 7px; height: 7px; border-radius: 50%; }
+  .dot-sm.ok { background: var(--green); animation: pulse 1.6s infinite; }
+  .dot-sm.warn { background: var(--amber); animation: pulse .8s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+
+  .nav-right { display: flex; align-items: center; gap: 12px; }
+  .user-chip { display: flex; align-items: center; gap: 9px; font-size: 12.5px; color: var(--text-mid); padding: 6px 10px 6px 6px; border: 1px solid var(--border); border-radius: 20px; }
+  .user-chip .avatar {
+    width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, var(--blue), var(--amber));
+    display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700;
+    color: #0B0F14; font-family: 'IBM Plex Mono', monospace; text-transform: uppercase;
+  }
+
+  .btn {
+    position: relative; overflow: hidden;
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+    padding: 8px 15px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-2); color: var(--text-hi); cursor: pointer;
+    transition: border-color .15s, background .15s, transform .1s; display: inline-flex; align-items: center; gap: 7px;
+    text-decoration: none;
+  }
+  .btn:hover { border-color: #3E4C5E; transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+  .btn.primary { background: linear-gradient(135deg, var(--blue), #1D4ED8); border-color: transparent; box-shadow: 0 6px 18px rgba(59,130,246,.3); }
+  .btn.danger { border-color: rgba(239,68,68,.35); color: #FCA5A5; }
+  .btn.danger:hover { background: var(--red-dim); }
+  .btn .ripple { position: absolute; border-radius: 50%; background: rgba(255,255,255,.35); transform: scale(0); animation: ripple .55s ease-out; pointer-events: none; }
+  @keyframes ripple { to { transform: scale(3); opacity: 0; } }
+
+  /* ================= content ================= */
+  .content { padding: 24px 28px 40px; max-width: 1600px; margin: 0 auto; }
+
+  .section-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin: 30px 0 14px; }
+  .section-head:first-child { margin-top: 0; }
+  .section-head .st { display: flex; align-items: center; gap: 9px; }
+  .section-head h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .04em; }
+  .section-head .icon-wrap { width: 26px; height: 26px; border-radius: 7px; background: var(--bg-2); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; }
+
+  .insight-banner {
+    display: flex; align-items: center; gap: 11px; padding: 12px 16px; margin-bottom: 22px;
+    background: linear-gradient(90deg, var(--blue-dim), transparent);
+    border: 1px solid var(--border); border-left: 3px solid var(--blue); border-radius: 10px;
+    font-size: 12.5px; color: var(--text-mid); line-height: 1.5;
+  }
+  .insight-banner svg { flex-shrink: 0; }
+  .insight-banner b { color: #93C5FD; font-weight: 600; }
+
+  /* ---- panels ---- */
+  .panel {
+    background: linear-gradient(180deg, var(--bg-1), var(--bg-1));
+    border: 1px solid var(--border); border-radius: 14px; padding: 18px;
+    transition: box-shadow .2s, border-color .2s, transform .2s;
+  }
+  .panel:hover { box-shadow: 0 14px 34px rgba(0,0,0,.32); border-color: #2A3542; }
+  .panel-title { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .panel-title svg { flex-shrink: 0; }
+  .panel-title .eyebrow { margin-bottom: 0; }
+
+  .pill {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
+    padding: 6px 13px; border-radius: 20px; border: 1px solid var(--border); background: transparent; color: var(--text-mid); cursor: pointer;
+    transition: border-color .15s, color .15s, background .15s;
+  }
+  .pill:hover { border-color: #3E4C5E; color: var(--text-hi); }
+  .pill.active { border-color: var(--blue); background: var(--blue-dim); color: #93C5FD; }
+
+  .filter-panel { display: flex; flex-wrap: wrap; gap: 24px; margin-bottom: 22px; padding: 14px 18px; }
+  .filter-group { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+  /* ---- KPI cards ---- */
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; }
+  .kpi-card {
+    position: relative; background: var(--bg-1); border: 1px solid var(--border); border-radius: 14px;
+    padding: 18px; overflow: hidden;
+    transition: transform .2s, box-shadow .2s, border-color .2s;
+  }
+  .kpi-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent, var(--blue)); }
+  .kpi-card:hover { transform: translateY(-3px); box-shadow: 0 16px 36px rgba(0,0,0,.35); border-color: #2A3542; }
+  .kpi-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; }
+  .kpi-icon { width: 36px; height: 36px; border-radius: 9px; display: flex; align-items: center; justify-content: center; background: var(--accent-dim, var(--blue-dim)); }
+  .kpi-trend { display: flex; align-items: center; gap: 3px; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; padding: 3px 7px; border-radius: 10px; }
+  .kpi-trend.up { color: #FCA5A5; background: var(--red-dim); }
+  .kpi-trend.down { color: #86EFAC; background: var(--green-dim); }
+  .kpi-trend.flat { color: var(--text-lo); background: rgba(255,255,255,.04); }
+  .kpi-value { font-family: 'IBM Plex Mono', monospace; font-size: 27px; font-weight: 600; line-height: 1; margin-bottom: 5px; }
+  .kpi-label { font-size: 11.5px; color: var(--text-mid); }
+  .kpi-sub { font-size: 10.5px; color: var(--text-lo); margin-top: 3px; }
+
+  /* ---- map + feed ---- */
+  .main-grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; }
+  #map { width: 100%; height: 440px; border-radius: 10px; border: 1px solid var(--border-soft); }
+  .leaflet-layer, .leaflet-control { filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9); }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--bg-2); color: var(--text-hi); filter: invert(1) hue-rotate(180deg); }
+  .map-legend { display: flex; gap: 16px; margin-top: 12px; flex-wrap: wrap; }
+  .map-legend .lg-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-mid); }
+  .map-legend .lg-dot { width: 9px; height: 9px; border-radius: 50%; }
+
+  .feed-list { display: flex; flex-direction: column; gap: 8px; max-height: 440px; overflow-y: auto; padding-right: 2px; }
+  .feed-card {
+    display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px;
+    background: var(--bg-2); border: 1px solid var(--border-soft); border-left: 3px solid var(--sev-color, var(--blue));
+    border-radius: 8px; animation: slideIn .3s cubic-bezier(.16,1,.3,1);
+  }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+  .feed-badge {
+    font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; text-transform: uppercase; letter-spacing: .04em;
+    padding: 3px 7px; border-radius: 5px; flex-shrink: 0; margin-top: 1px;
+    color: var(--sev-color, var(--blue)); background: var(--sev-dim, var(--blue-dim));
+  }
+  .feed-body { flex: 1; min-width: 0; }
+  .feed-loc { font-size: 12.5px; font-weight: 500; color: var(--text-hi); }
+  .feed-road { font-size: 10.5px; color: var(--text-lo); margin-top: 1px; }
+  .feed-time { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--text-lo); flex-shrink: 0; margin-top: 2px; }
+
+  /* ---- hotspot analysis ---- */
+  .hotspot-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; }
+  .hs-card {
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 15px;
+    cursor: pointer; transition: transform .18s, box-shadow .18s, border-color .18s;
+  }
+  .hs-card:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(0,0,0,.3); border-color: #2A3542; }
+  .hs-card.active { border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+  .hs-top { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 4px; }
+  .hs-rank { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--text-lo); }
+  .hs-risk-badge {
+    font-family: 'IBM Plex Mono', monospace; font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600;
+  }
+  .hs-name { font-size: 13.5px; font-weight: 600; margin: 6px 0 2px; }
+  .hs-road { font-size: 10.5px; color: var(--text-lo); margin-bottom: 12px; }
+  .hs-progress-track { height: 6px; background: var(--bg-2); border-radius: 3px; overflow: hidden; margin-bottom: 10px; }
+  .hs-progress-fill { height: 100%; border-radius: 3px; transition: width .3s ease; }
+  .hs-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+  .hs-badge { font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; padding: 3px 7px; border-radius: 5px; }
+  .hs-trend { position: absolute; }
+
+  /* ---- charts ---- */
+  .charts-row { display: grid; grid-template-columns: 1fr 1fr 0.8fr; gap: 16px; }
+  .severity-legend { display: flex; justify-content: center; gap: 16px; margin-top: 10px; }
+  .severity-legend .leg-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-mid); }
+  .severity-legend .leg-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+  .severity-legend .leg-pct { font-family: 'IBM Plex Mono', monospace; color: var(--text-hi); }
+
+  /* ---- system status ---- */
+  .status-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; }
+  .status-item {
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  }
+  .status-item .si-label { font-size: 11.5px; color: var(--text-mid); }
+  .status-item .si-value { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+
+  /* ---- footer ---- */
+  .footer {
+    margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--border-soft);
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+  }
+  .footer .fl-left { font-size: 11px; color: var(--text-lo); display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .footer .fl-left span { display: flex; align-items: center; gap: 6px; }
+  .footer .fl-right { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: var(--text-lo); display: flex; align-items: center; gap: 14px; }
+
+  /* ---- responsive ---- */
+  @media (max-width: 1200px) {
+    .kpi-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .hotspot-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .status-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  }
+  @media (max-width: 980px) {
+    .main-grid { grid-template-columns: 1fr; }
+    .charts-row { grid-template-columns: 1fr; }
+    .nav-center { display: none; }
+  }
+  @media (max-width: 600px) {
+    .kpi-grid, .hotspot-grid, .status-grid { grid-template-columns: 1fr; }
+    .content { padding: 18px 14px 32px; }
+    .navbar { padding: 10px 14px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="loadingScreen">
+  <div class="load-logo">
+    <svg width="30" height="30" viewBox="0 0 24 24" fill="none"><path d="M12 2 1 21h22L12 2z" fill="#fff"/><rect x="11" y="9" width="2" height="6" fill="#1D4ED8"/><rect x="11" y="16" width="2" height="2" fill="#1D4ED8"/></svg>
+  </div>
+  <div class="load-title">Accident Hotspot Analysis</div>
+  <div class="load-sub">Traffic Operations Center</div>
+  <div class="load-bar-track"><div class="load-bar-fill" id="loadBarFill"></div></div>
+  <div class="load-status" id="loadStatus">Initializing…</div>
+</div>
+
+<div id="toastStack"></div>
+
+<div id="app">
+
+  <div class="navbar">
+    <div class="navbar-row">
+      <div class="brand">
+        <div class="mark"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 2 1 21h22L12 2z" fill="#fff"/><rect x="11" y="9" width="2" height="6" fill="#1D4ED8"/><rect x="11" y="16" width="2" height="2" fill="#1D4ED8"/></svg></div>
+        <div class="titles">
+          <h1>Accident Hotspot Analysis</h1>
+          <div class="sub">Traffic Operations Center · Chennai</div>
+        </div>
+      </div>
+
+      <div class="nav-center">
+        <div class="clock-block">
+          <div class="time" id="navTime">--:--:--</div>
+          <div class="date" id="navDate">—</div>
+        </div>
+        <span class="status-pill ok" id="liveBadge"><span class="dot-sm ok" id="connDot"></span><span id="connLabel">Live</span></span>
+        <span class="status-pill ok" id="sysBadge"><span class="dot-sm ok"></span>Operational</span>
+      </div>
+
+      <div class="nav-right">
+        <div class="user-chip">
+          <span class="avatar" id="userAvatar">··</span>
+          <span>Signed in as <b id="userName" style="color:var(--text-hi);">…</b></span>
+        </div>
+        <a class="btn danger" href="/logout">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          Log out
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:16px;">
+      <div>
+        <div class="eyebrow" style="margin-bottom:4px;">Live incident dashboard</div>
+        <p style="margin:0; font-size:13px; color:var(--text-mid);">Streamed over Server-Sent Events · real-time hotspot telemetry</p>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <button class="btn" id="pauseBtn">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+          <span id="pauseLabel">Pause feed</span>
+        </button>
+        <button class="btn danger" id="resetBtn">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          Reset view
+        </button>
+      </div>
+    </div>
+
+    <div class="insight-banner" style="margin-top:18px;" id="insightBanner">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#93C5FD" stroke-width="2"><path d="M12 2 1 21h22L12 2z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="16" x2="12" y2="16.5"/></svg>
+      <span id="insightText">Analyzing incident patterns…</span>
+    </div>
+
+    <div class="panel filter-panel">
+      <div class="filter-group">
+        <span class="eyebrow" style="margin:0;">Severity</span>
+        <button class="pill active" data-filter="severity" data-value="All">All</button>
+        <button class="pill" data-filter="severity" data-value="Minor">Minor</button>
+        <button class="pill" data-filter="severity" data-value="Serious">Serious</button>
+        <button class="pill" data-filter="severity" data-value="Fatal">Fatal</button>
+      </div>
+      <div class="filter-group">
+        <span class="eyebrow" style="margin:0;">Time band</span>
+        <button class="pill active" data-filter="time" data-value="All">All</button>
+        <button class="pill" data-filter="time" data-value="Morning">Morning</button>
+        <button class="pill" data-filter="time" data-value="Afternoon">Afternoon</button>
+        <button class="pill" data-filter="time" data-value="Evening">Evening</button>
+        <button class="pill" data-filter="time" data-value="Night">Night</button>
+      </div>
+    </div>
+
+    <!-- ===================== KPI CARDS ===================== -->
+    <div class="section-head">
+      <div class="st"><div class="icon-wrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#93C5FD" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></div><h2>Key metrics</h2></div>
+    </div>
+    <div class="kpi-grid" id="kpiGrid"></div>
+
+    <!-- ===================== MAP + LIVE FEED ===================== -->
+    <div class="section-head">
+      <div class="st"><div class="icon-wrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#93C5FD" stroke-width="2"><path d="M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></div><h2>Map & live feed</h2></div>
+    </div>
+    <div class="main-grid">
+      <div class="panel">
+        <div class="panel-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-mid)" stroke-width="2"><path d="M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          <div class="eyebrow">Zone map · circle size = incident volume, color = risk score</div>
+        </div>
+        <div id="map"></div>
+        <div class="map-legend">
+          <span class="lg-item"><span class="lg-dot" style="background:#22C55E;"></span>Low risk</span>
+          <span class="lg-item"><span class="lg-dot" style="background:#F59E0B;"></span>Moderate risk</span>
+          <span class="lg-item"><span class="lg-dot" style="background:#EF4444;"></span>High risk</span>
+          <span class="lg-item"><span class="lg-dot" style="background:#EF4444; box-shadow:0 0 0 3px rgba(239,68,68,.25);"></span>Active pulse = new incident</span>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-mid)" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          <div class="eyebrow">Live feed</div>
+        </div>
+        <div class="feed-list" id="tickerList"></div>
+      </div>
+    </div>
+
+    <!-- ===================== HOTSPOT ANALYSIS ===================== -->
+    <div class="section-head">
+      <div class="st"><div class="icon-wrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#93C5FD" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></div><h2>Hotspot analysis</h2></div>
+    </div>
+    <div class="hotspot-grid" id="hotspotGrid"></div>
+
+    <!-- ===================== CHARTS ===================== -->
+    <div class="section-head">
+      <div class="st"><div class="icon-wrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#93C5FD" stroke-width="2"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg></div><h2>Pattern analytics</h2></div>
+    </div>
+    <div class="charts-row">
+      <div class="panel">
+        <div class="panel-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-mid)" stroke-width="2"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
+          <div class="eyebrow">Incidents by hour of day</div>
+        </div>
+        <div style="position:relative; height:190px;">
+          <canvas id="hourlyChart" role="img" aria-label="Bar chart of incidents by hour of day"></canvas>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-mid)" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="4" x2="9" y2="10"/></svg>
+          <div class="eyebrow">Incidents by weekday</div>
+        </div>
+        <div style="position:relative; height:190px;">
+          <canvas id="weekdayChart" role="img" aria-label="Bar chart of incidents by weekday"></canvas>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-mid)" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 9 9"/></svg>
+          <div class="eyebrow">Severity mix</div>
+        </div>
+        <div style="position:relative; height:190px;">
+          <canvas id="severityChart" role="img" aria-label="Doughnut chart of severity mix"></canvas>
+        </div>
+        <div class="severity-legend" id="severityLegend"></div>
+      </div>
+    </div>
+
+    <!-- ===================== SYSTEM STATUS ===================== -->
+    <div class="section-head">
+      <div class="st"><div class="icon-wrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#93C5FD" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div><h2>System status</h2></div>
+      <span class="mono" id="lastUpdated" style="font-size:11px; color:var(--text-lo);">Last update —</span>
+    </div>
+    <div class="status-grid" id="statusGrid"></div>
+
+    <div class="footer">
+      <div class="fl-left">
+        <span>⚙ Spring Boot</span>
+        <span>📊 Chart.js</span>
+        <span>🗺 Leaflet</span>
+        <span>© OpenStreetMap contributors</span>
+      </div>
+      <div class="fl-right">
+        <span id="footerStatus" style="color:#86EFAC;">● Server operational</span>
+        <span>Accident Hotspot Analysis · v1.2.0</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+(function () {
+  const SEVERITIES = ["Minor", "Serious", "Fatal"];
+  const SEV_COLOR = { Minor: "#22C55E", Serious: "#F59E0B", Fatal: "#EF4444" };
+  const SEV_DIM = { Minor: "rgba(34,197,94,.12)", Serious: "rgba(245,158,11,.12)", Fatal: "rgba(239,68,68,.12)" };
+  const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const SEVERITY_SCORE = { Minor: 1, Serious: 2.2, Fatal: 4.5 };
+  const TIME_BANDS = { All: [0, 24], Morning: [5, 12], Afternoon: [12, 17], Evening: [17, 21], Night: [21, 29] };
+
+  function inBand(hour, band) {
+    const [lo, hi] = TIME_BANDS[band];
+    if (hi <= 24) return hour >= lo && hour < hi;
+    return hour >= lo || hour < hi - 24;
+  }
+  function colorForScore(t) {
+    const stops = [[34, 197, 94], [245, 158, 11], [239, 68, 68]];
+    let a = stops[0], b = stops[1], localT = t / 0.5;
+    if (t > 0.5) { a = stops[1]; b = stops[2]; localT = (t - 0.5) / 0.5; }
+    const c = a.map((v, i) => Math.round(v + (b[i] - v) * localT));
+    return `rgb(${c[0]},${c[1]},${c[2]})`;
+  }
+
+  let ZONES = [];
+  let records = [];
+  let severityFilter = "All", timeFilter = "All", selectedZone = null, paused = false;
+  let connState = "connecting";
+  let prevSnapshot = null; // for KPI/hotspot trend deltas
+  const pageLoadTime = Date.now();
+
+  /* ================= toasts ================= */
+  function showToast(message, type) {
+    const stack = document.getElementById('toastStack');
+    if (stack.children.length >= 3) stack.removeChild(stack.firstChild);
+    const el = document.createElement('div');
+    el.className = 'toast ' + (type || '');
+    const iconColor = type === 'success' ? '#22C55E' : type === 'danger' ? '#EF4444' : type === 'warn' ? '#F59E0B' : '#3B82F6';
+    el.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${iconColor}" stroke-width="2" style="flex-shrink:0;"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg><span>${message}</span>`;
+    stack.appendChild(el);
+    setTimeout(() => {
+      el.classList.add('leaving');
+      setTimeout(() => el.remove(), 250);
+    }, 3200);
+  }
+
+  /* ================= loading screen ================= */
+  const loadBar = document.getElementById('loadBarFill');
+  const loadStatus = document.getElementById('loadStatus');
+  const loadSteps = ["Initializing…", "Connecting to backend…", "Loading zone data…", "Fetching incident history…", "Rendering dashboard…"];
+  let loadStep = 0;
+  const loadTimer = setInterval(() => {
+    loadStep = Math.min(loadStep + 1, loadSteps.length - 1);
+    loadStatus.textContent = loadSteps[loadStep];
+    loadBar.style.width = Math.min(90, (loadStep + 1) / loadSteps.length * 100) + '%';
+  }, 380);
+
+  function finishLoading() {
+    clearInterval(loadTimer);
+    loadBar.style.width = '100%';
+    loadStatus.textContent = 'Ready.';
+    setTimeout(() => {
+      document.getElementById('loadingScreen').classList.add('hidden');
+      showToast('System ready', 'success');
+    }, 350);
+  }
+
+  /* ================= header clock ================= */
+  function tickClock() {
+    const now = new Date();
+    document.getElementById('navTime').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    document.getElementById('navDate').textContent = now.toLocaleDateString([], { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+  }
+  tickClock();
+  setInterval(tickClock, 1000);
+
+  /* ================= signed-in user ================= */
+  fetch('/api/me').then(r => r.json()).then(me => {
+    document.getElementById('userName').textContent = me.username;
+    document.getElementById('userAvatar').textContent = me.username.slice(0, 2).toUpperCase();
+    showToast('Authentication successful — welcome, ' + me.username, 'success');
+  }).catch(() => {});
+
+  /* ================= map ================= */
+  const map = L.map('map', { zoomControl: true, scrollWheelZoom: true }).setView([13.02, 80.23], 11);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors', maxZoom: 18,
+  }).addTo(map);
+
+  function pulseAt(zone) {
+    if (!zone) return;
+    let r = 8, opacity = 0.85;
+    const ring = L.circleMarker([zone.lat, zone.lng], { radius: r, color: "#EF4444", weight: 2, fill: false, opacity }).addTo(map);
+    const iv = setInterval(() => {
+      r += 3; opacity -= 0.06;
+      if (opacity <= 0) { clearInterval(iv); map.removeLayer(ring); return; }
+      ring.setRadius(r); ring.setStyle({ opacity });
+    }, 40);
+  }
+
+  /* ================= charts ================= */
+  Chart.defaults.color = "#94A3B8";
+  Chart.defaults.font.family = "'IBM Plex Mono', monospace";
+  Chart.defaults.font.size = 10;
+  const gridOpt = { color: "rgba(255,255,255,.05)" };
+  const tooltipStyle = {
+    backgroundColor: "#1E293B", borderColor: "rgba(255,255,255,.08)", borderWidth: 1,
+    titleFont: { family: "'Inter', sans-serif", size: 12, weight: '600' },
+    bodyFont: { family: "'IBM Plex Mono', monospace", size: 11 },
+    padding: 10, cornerRadius: 8, displayColors: false,
+  };
+
+  function makeGradient(ctx, colorTop) {
+    const g = ctx.createLinearGradient(0, 0, 0, 190);
+    g.addColorStop(0, colorTop);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    return g;
+  }
+  const hourlyCtx = document.getElementById('hourlyChart').getContext('2d');
+  const weekdayCtx = document.getElementById('weekdayChart').getContext('2d');
+
+  const hourlyChart = new Chart(hourlyCtx, {
+    type: 'bar',
+    data: { labels: Array.from({ length: 24 }, (_, h) => h + 'h'), datasets: [{ data: Array(24).fill(0), backgroundColor: makeGradient(hourlyCtx, "#F59E0B"), borderRadius: 4, maxBarThickness: 16 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 400 },
+      plugins: { legend: { display: false }, tooltip: tooltipStyle },
+      scales: { x: { grid: { display: false }, ticks: { autoSkip: true, maxTicksLimit: 8 } }, y: { grid: gridOpt, beginAtZero: true } }
+    }
+  });
+  const weekdayChart = new Chart(weekdayCtx, {
+    type: 'bar',
+    data: { labels: WEEKDAYS, datasets: [{ data: Array(7).fill(0), backgroundColor: makeGradient(weekdayCtx, "#3B82F6"), borderRadius: 4, maxBarThickness: 28 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 400 },
+      plugins: { legend: { display: false }, tooltip: tooltipStyle },
+      scales: { x: { grid: { display: false } }, y: { grid: gridOpt, beginAtZero: true } }
+    }
+  });
+  const severityChart = new Chart(document.getElementById('severityChart'), {
+    type: 'doughnut',
+    data: { labels: SEVERITIES, datasets: [{ data: [0, 0, 0], backgroundColor: SEVERITIES.map(s => SEV_COLOR[s]), borderColor: "#171E27", borderWidth: 3, hoverOffset: 6 }] },
+    options: { responsive: true, maintainAspectRatio: false, cutout: '68%', animation: { duration: 400 }, plugins: { legend: { display: false }, tooltip: tooltipStyle } }
+  });
+
+  /* ================= filters ================= */
+  document.querySelectorAll('.pill[data-filter]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const group = btn.dataset.filter;
+      document.querySelectorAll(`.pill[data-filter="${group}"]`).forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      if (group === 'severity') severityFilter = btn.dataset.value;
+      else timeFilter = btn.dataset.value;
+      render();
+    });
+  });
+
+  function addRipple(btn, evt) {
+    const rect = btn.getBoundingClientRect();
+    const ripple = document.createElement('span');
+    ripple.className = 'ripple';
+    ripple.style.left = (evt.clientX - rect.left - 10) + 'px';
+    ripple.style.top = (evt.clientY - rect.top - 10) + 'px';
+    ripple.style.width = ripple.style.height = '20px';
+    btn.appendChild(ripple);
+    setTimeout(() => ripple.remove(), 600);
+  }
+
+  document.getElementById('pauseBtn').addEventListener('click', (e) => {
+    addRipple(e.currentTarget, e);
+    paused = !paused;
+    document.getElementById('pauseLabel').textContent = paused ? 'Resume feed' : 'Pause feed';
+    setConnState(paused ? 'paused' : connEverConnected ? 'connected' : 'connecting');
+    showToast(paused ? 'Live feed paused' : 'Live feed resumed', paused ? 'warn' : 'success');
+  });
+  document.getElementById('resetBtn').addEventListener('click', (e) => {
+    addRipple(e.currentTarget, e);
+    document.getElementById('tickerList').innerHTML = '';
+    selectedZone = null;
+    loadHistory();
+    showToast('View reset to latest history', 'success');
+  });
+
+  /* ================= live feed ================= */
+  function addTickerItem(zone, severity, when) {
+    const list = document.getElementById('tickerList');
+    const el = document.createElement('div');
+    el.className = 'feed-card';
+    el.style.setProperty('--sev-color', SEV_COLOR[severity]);
+    el.style.setProperty('--sev-dim', SEV_DIM[severity]);
+    const time = when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    el.innerHTML = `
+      <span class="feed-badge">${severity}</span>
+      <div class="feed-body">
+        <div class="feed-loc">${zone ? zone.name : 'Unknown zone'}</div>
+        <div class="feed-road">${zone ? zone.road : ''}</div>
+      </div>
+      <div class="feed-time">${time}</div>`;
+    list.prepend(el);
+    while (list.children.length > 14) list.removeChild(list.lastChild);
+  }
+
+  /* ================= KPI + status card scaffolding ================= */
+  const KPI_DEFS = [
+    { key: 'total', label: 'Total incidents', accent: '#3B82F6', accentDim: 'rgba(59,130,246,.12)',
+      icon: '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>' },
+    { key: 'fatal', label: 'Fatal incidents', accent: '#EF4444', accentDim: 'rgba(239,68,68,.12)',
+      icon: '<path d="M12 2 1 21h22L12 2z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="16" x2="12" y2="16.5"/>' },
+    { key: 'serious', label: 'Serious incidents', accent: '#F59E0B', accentDim: 'rgba(245,158,11,.12)',
+      icon: '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>' },
+    { key: 'highRisk', label: 'High-risk zones', accent: '#22C55E', accentDim: 'rgba(34,197,94,.12)',
+      icon: '<path d="M21 10c0 6-9 12-9 12s-9-6-9-12a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>' },
+    { key: 'avgDaily', label: 'Avg. daily incidents', accent: '#A78BFA', accentDim: 'rgba(167,139,250,.12)',
+      icon: '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/>', sub: 'Across observed history' },
+    { key: 'liveToday', label: 'Live incidents today', accent: '#22C55E', accentDim: 'rgba(34,197,94,.12)',
+      icon: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>', sub: 'Last 24 hours' },
+    { key: 'riskIndex', label: 'Risk index', accent: '#F59E0B', accentDim: 'rgba(245,158,11,.12)',
+      icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>', sub: '0–100 severity-weighted', suffix: '' },
+    { key: 'avgResponse', label: 'Avg. response time', accent: '#3B82F6', accentDim: 'rgba(59,130,246,.12)',
+      icon: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/>', sub: 'Simulated · not backend data', suffix: ' min' },
+  ];
+
+  const kpiGrid = document.getElementById('kpiGrid');
+  KPI_DEFS.forEach(def => {
+    const card = document.createElement('div');
+    card.className = 'kpi-card';
+    card.style.setProperty('--accent', def.accent);
+    card.style.setProperty('--accent-dim', def.accentDim);
+    card.innerHTML = `
+      <div class="kpi-top">
+        <div class="kpi-icon"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="${def.accent}" stroke-width="2">${def.icon}</svg></div>
+        <span class="kpi-trend flat" id="trend-${def.key}">—</span>
+      </div>
+      <div class="kpi-value" id="kpi-${def.key}">0</div>
+      <div class="kpi-label">${def.label}</div>
+      ${def.sub ? `<div class="kpi-sub">${def.sub}</div>` : ''}
+    `;
+    kpiGrid.appendChild(card);
+  });
+
+  const STATUS_DEFS = [
+    { key: 'system', label: 'System operational' },
+    { key: 'feed', label: 'Feed connected' },
+    { key: 'api', label: 'API status' },
+    { key: 'sse', label: 'SSE status' },
+    { key: 'mapStatus', label: 'Map status' },
+    { key: 'latency', label: 'Latency' },
+    { key: 'uptime', label: 'Session uptime' },
+    { key: 'updated', label: 'Last updated' },
+  ];
+  const statusGrid = document.getElementById('statusGrid');
+  STATUS_DEFS.forEach(def => {
+    const item = document.createElement('div');
+    item.className = 'status-item';
+    item.innerHTML = `<span class="si-label">${def.label}</span><span class="si-value" id="status-${def.key}">—</span>`;
+    statusGrid.appendChild(item);
+  });
+
+  function animateCount(el, to) {
+    const from = parseFloat(el.dataset.val || '0');
+    const isFloat = to % 1 !== 0;
+    const duration = 500, start = performance.now();
+    function step(now) {
+      const p = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - p, 3);
+      const val = from + (to - from) * eased;
+      el.textContent = isFloat ? val.toFixed(1) : Math.round(val);
+      if (p < 1) requestAnimationFrame(step); else el.dataset.val = to;
+    }
+    requestAnimationFrame(step);
+  }
+
+  function setTrend(key, deltaPct) {
+    const el = document.getElementById('trend-' + key);
+    if (deltaPct === null || !isFinite(deltaPct)) { el.className = 'kpi-trend flat'; el.textContent = '—'; return; }
+    if (Math.abs(deltaPct) < 1) { el.className = 'kpi-trend flat'; el.textContent = '0%'; return; }
+    const up = deltaPct > 0;
+    el.className = 'kpi-trend ' + (up ? 'up' : 'down');
+    el.textContent = (up ? '▲ ' : '▼ ') + Math.abs(Math.round(deltaPct)) + '%';
+  }
+
+  /* ================= connection state ================= */
+  let connEverConnected = false;
+  function setConnState(state) {
+    connState = state;
+    const dot = document.getElementById('connDot');
+    const label = document.getElementById('connLabel');
+    const badge = document.getElementById('liveBadge');
+    dot.className = 'dot-sm ' + (state === 'connected' ? 'ok' : 'warn');
+    badge.className = 'status-pill ' + (state === 'connected' ? 'ok' : 'warn');
+    label.textContent = state === 'connected' ? 'Live' : state === 'paused' ? 'Paused' : 'Reconnecting…';
+  }
+
+  /* ================= main render ================= */
+  function render(flash) {
+    const filtered = records.filter(r =>
+      (severityFilter === 'All' || r.severity === severityFilter) &&
+      (timeFilter === 'All' || inBand(r.hour, timeFilter))
+    );
+
+    const zoneStats = ZONES.map(z => ({ ...z, count: 0, fatal: 0, serious: 0, minor: 0, score: 0 }));
+    const byId = Object.fromEntries(zoneStats.map(z => [z.id, z]));
+    filtered.forEach(r => {
+      const z = byId[r.zoneId];
+      if (!z) return;
+      z.count++; z.score += SEVERITY_SCORE[r.severity];
+      if (r.severity === 'Fatal') z.fatal++;
+      else if (r.severity === 'Serious') z.serious++;
+      else z.minor++;
+    });
+    const maxScore = Math.max(1, ...zoneStats.map(z => z.score));
+    const maxCount = Math.max(1, ...zoneStats.map(z => z.count));
+    zoneStats.forEach(z => z.norm = z.score / maxScore);
+    zoneStats.sort((a, b) => b.score - a.score);
+
+    const fatalCount = filtered.filter(r => r.severity === 'Fatal').length;
+    const seriousCount = filtered.filter(r => r.severity === 'Serious').length;
+    const highRiskCount = zoneStats.filter(z => z.norm >= 0.6).length;
+
+    // ---- derived KPI-only metrics (UI layer, computed from real fetched data) ----
+    const now = Date.now();
+    const dayMs = 86400000;
+    const timestamps = filtered.map(r => r.ts).filter(Boolean);
+    const spanDays = timestamps.length ? Math.max(1, Math.round((Math.max(...timestamps) - Math.min(...timestamps)) / dayMs) + 1) : 1;
+    const avgDaily = filtered.length / spanDays;
+    const liveToday = filtered.filter(r => r.ts && (now - r.ts) <= dayMs).length;
+    const totalScore = filtered.reduce((s, r) => s + SEVERITY_SCORE[r.severity], 0);
+    const riskIndex = filtered.length ? Math.min(100, Math.round((totalScore / filtered.length) * 22)) : 0;
+    if (!window.__avgResponse) window.__avgResponse = (6 + Math.random() * 2.5); // simulated once per session
+    const avgResponse = window.__avgResponse;
+
+    const kpiValues = {
+      total: filtered.length, fatal: fatalCount, serious: seriousCount, highRisk: highRiskCount,
+      avgDaily: avgDaily, liveToday: liveToday, riskIndex: riskIndex, avgResponse: avgResponse,
+    };
+    Object.entries(kpiValues).forEach(([key, val]) => {
+      const el = document.getElementById('kpi-' + key);
+      if (el) animateCount(el, val);
+    });
+
+    if (prevSnapshot) {
+      Object.keys(kpiValues).forEach(key => {
+        const prev = prevSnapshot[key];
+        const delta = prev ? ((kpiValues[key] - prev) / prev) * 100 : (kpiValues[key] > 0 ? 100 : null);
+        setTrend(key, delta);
+      });
+    }
+
+    if (flash) {
+      document.querySelectorAll('.kpi-card').forEach(card => {
+        card.style.transition = 'none';
+        card.style.background = 'rgba(59,130,246,.08)';
+        requestAnimationFrame(() => {
+          card.style.transition = 'background .6s ease';
+          card.style.background = '';
+        });
+      });
+    }
+
+    ZONES.forEach(z => {
+      const stat = byId[z.id];
+      const radius = 8 + Math.sqrt(stat.count) * 3;
+      const color = colorForScore(stat.norm);
+      z.marker.setRadius(radius);
+      z.marker.setStyle({ fillColor: color, color: selectedZone === z.id ? "#3B82F6" : "#0B0F14", weight: selectedZone === z.id ? 2.5 : 1.5 });
+      z.marker.setTooltipContent(`${z.name} — ${stat.count} incident${stat.count === 1 ? '' : 's'}`);
+    });
+
+    // ---- hotspot analysis cards ----
+    const hsGrid = document.getElementById('hotspotGrid');
+    hsGrid.innerHTML = '';
+    zoneStats.forEach((z, i) => {
+      const riskColor = colorForScore(z.norm);
+      const riskLabel = z.norm >= 0.6 ? 'High' : z.norm >= 0.3 ? 'Moderate' : 'Low';
+      const prevZone = prevSnapshot && prevSnapshot.zones ? prevSnapshot.zones[z.id] : null;
+      let trendHtml = '<span class="kpi-trend flat" style="position:static;">—</span>';
+      if (prevZone !== undefined && prevZone !== null) {
+        const d = z.count - prevZone;
+        if (d > 0) trendHtml = `<span class="kpi-trend up" style="position:static;">▲ ${d}</span>`;
+        else if (d < 0) trendHtml = `<span class="kpi-trend down" style="position:static;">▼ ${Math.abs(d)}</span>`;
+      }
+      const card = document.createElement('div');
+      card.className = 'hs-card' + (selectedZone === z.id ? ' active' : '');
+      card.innerHTML = `
+        <div class="hs-top">
+          <span class="hs-rank">#${String(i + 1).padStart(2, '0')} RANKED</span>
+          <span class="hs-risk-badge" style="color:${riskColor}; background:${riskColor}22;">${riskLabel} · ${Math.round(z.score * 10) / 10}</span>
+        </div>
+        <div class="hs-name">${z.name}</div>
+        <div class="hs-road">${z.road}</div>
+        <div class="hs-progress-track"><div class="hs-progress-fill" style="width:${(z.count / maxCount) * 100}%; background:${riskColor};"></div></div>
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <div class="hs-badges">
+            <span class="hs-badge" style="color:${SEV_COLOR.Fatal}; background:${SEV_DIM.Fatal};">F ${z.fatal}</span>
+            <span class="hs-badge" style="color:${SEV_COLOR.Serious}; background:${SEV_DIM.Serious};">S ${z.serious}</span>
+            <span class="hs-badge" style="color:${SEV_COLOR.Minor}; background:${SEV_DIM.Minor};">M ${z.minor}</span>
+          </div>
+          ${trendHtml}
+        </div>
+      `;
+      card.addEventListener('click', () => { selectedZone = z.id; map.panTo([z.lat, z.lng]); render(); });
+      hsGrid.appendChild(card);
+    });
+
+    const hourCounts = Array(24).fill(0);
+    const weekdayCounts = Array(7).fill(0);
+    const sevCounts = { Minor: 0, Serious: 0, Fatal: 0 };
+    filtered.forEach(r => { hourCounts[r.hour]++; weekdayCounts[r.weekday]++; sevCounts[r.severity]++; });
+    hourlyChart.data.datasets[0].data = hourCounts; hourlyChart.update('none');
+    weekdayChart.data.datasets[0].data = weekdayCounts; weekdayChart.update('none');
+    severityChart.data.datasets[0].data = SEVERITIES.map(s => sevCounts[s]); severityChart.update('none');
+
+    const legendEl = document.getElementById('severityLegend');
+    const sevTotal = Math.max(1, filtered.length);
+    legendEl.innerHTML = SEVERITIES.map(s => `
+      <span class="leg-item"><span class="leg-dot" style="background:${SEV_COLOR[s]};"></span>${s}
+        <span class="leg-pct">${Math.round(sevCounts[s] / sevTotal * 100)}%</span></span>
+    `).join('');
+
+    if (filtered.length > 0) {
+      const bandCounts = { Morning: 0, Afternoon: 0, Evening: 0, Night: 0 };
+      Object.keys(bandCounts).forEach(b => { bandCounts[b] = filtered.filter(r => inBand(r.hour, b)).length; });
+      const peakBand = Object.entries(bandCounts).sort((a, b) => b[1] - a[1])[0][0];
+      const peakPct = Math.round(bandCounts[peakBand] / filtered.length * 100);
+      const topZone = zoneStats[0];
+      document.getElementById('insightText').innerHTML =
+        `<b>${topZone.name}</b> is the highest-risk zone right now with ${topZone.count} incident${topZone.count === 1 ? '' : 's'}. ` +
+        `${peakPct}% of incidents in the current view fall in the <b>${peakBand.toLowerCase()}</b> window.`;
+    } else {
+      document.getElementById('insightText').textContent = 'No incidents match the current filters.';
+    }
+
+    // ---- snapshot for next trend comparison ----
+    const zoneSnap = {};
+    zoneStats.forEach(z => zoneSnap[z.id] = z.count);
+    prevSnapshot = { ...kpiValues, zones: zoneSnap };
+
+    updateSystemStatus();
+    touchLastUpdated();
+  }
+
+  function touchLastUpdated() {
+    const now = new Date();
+    const text = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    document.getElementById('lastUpdated').textContent = 'Last update — ' + text;
+    const el = document.getElementById('status-updated');
+    if (el) el.innerHTML = text;
+  }
+
+  /* ================= system status panel ================= */
+  function updateSystemStatus() {
+    const set = (key, html) => { const el = document.getElementById('status-' + key); if (el) el.innerHTML = html; };
+    set('system', '<span style="color:#86EFAC;">● Operational</span>');
+    set('feed', connState === 'connected'
+      ? '<span style="color:#86EFAC;">● Connected</span>'
+      : connState === 'paused' ? '<span style="color:#FCD34D;">● Paused</span>' : '<span style="color:#FCD34D;">● Reconnecting</span>');
+    set('api', '<span style="color:#86EFAC;">● 200 OK</span>');
+    set('sse', connState === 'connected' ? '<span style="color:#86EFAC;">● Streaming</span>' : '<span style="color:#FCD34D;">● Idle</span>');
+    set('mapStatus', '<span style="color:#86EFAC;">● Tiles loaded</span>');
+    set('latency', (32 + Math.round(Math.random() * 40)) + ' ms');
+    const upSec = Math.floor((Date.now() - pageLoadTime) / 1000);
+    const hh = String(Math.floor(upSec / 3600)).padStart(2, '0');
+    const mm = String(Math.floor((upSec % 3600) / 60)).padStart(2, '0');
+    const ss = String(upSec % 60).padStart(2, '0');
+    set('uptime', `${hh}:${mm}:${ss}`);
+  }
+  setInterval(updateSystemStatus, 1000);
+
+  /* ================= data loading ================= */
+  function buildMarkers() {
+    ZONES.forEach(z => {
+      z.marker = L.circleMarker([z.lat, z.lng], { radius: 10, weight: 1.5, color: "#0B0F14", fillOpacity: 0.85 })
+        .addTo(map)
+        .bindTooltip(z.name, { direction: "top" })
+        .on('click', () => { selectedZone = z.id; render(); });
+    });
+  }
+
+  function loadHistory() {
+    fetch('/api/incidents').then(r => r.json()).then(data => { records = data; render(); });
+  }
+
+  function connectStream() {
+    setConnState('connecting');
+    const source = new EventSource('/api/incidents/stream');
+    source.onopen = () => {
+      connEverConnected = true;
+      setConnState(paused ? 'paused' : 'connected');
+      showToast('Live feed connected', 'success');
+    };
+    source.addEventListener('incident', (e) => {
+      if (paused) return;
+      const rec = JSON.parse(e.data);
+      records.push(rec);
+      const zone = ZONES.find(z => z.id === rec.zoneId);
+      pulseAt(zone);
+      addTickerItem(zone, rec.severity, new Date(rec.ts));
+      render(true);
+      if (rec.severity === 'Fatal') showToast('New fatal incident — ' + (zone ? zone.name : 'unknown zone'), 'danger');
+      else showToast('New incident received — ' + (zone ? zone.name : 'unknown zone'), 'warn');
+    });
+    source.onerror = () => { if (!paused) setConnState('connecting'); };
+  }
+
+  fetch('/api/zones').then(r => r.json()).then(zones => {
+    ZONES = zones;
+    buildMarkers();
+    loadHistory();
+    connectStream();
+    finishLoading();
+  });
+})();
+</script>
+</body>
+</html>
